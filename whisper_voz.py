@@ -5,6 +5,7 @@ import argparse
 import select
 import subprocess
 import sys
+import time
 
 import numpy as np
 
@@ -98,11 +99,45 @@ def main():
     )
     stream.start()
 
+    def refresh_keyboards():
+        for kb in keyboards:
+            try:
+                kb.close()
+            except Exception:
+                pass
+        keyboards.clear()
+        keyboards.extend(find_keyboards())
+        if keyboards:
+            names = ", ".join(kb.name for kb in keyboards)
+            print(f"  Keyboards reconnected: {names}")
+        return len(keyboards) > 0
+
     try:
         while True:
-            r, _, _ = select.select(keyboards, [], [])
+            if not keyboards:
+                time.sleep(1)
+                if refresh_keyboards():
+                    continue
+                continue
+
+            try:
+                r, _, _ = select.select(keyboards, [], [])
+            except (OSError, ValueError):
+                print("\n  Device lost during select, reconnecting...", flush=True)
+                recording = False
+                refresh_keyboards()
+                continue
+
             for kb in r:
-                for event in kb.read():
+                try:
+                    events = list(kb.read())
+                except OSError:
+                    print("\n  Device lost during read, reconnecting...", flush=True)
+                    recording = False
+                    refresh_keyboards()
+                    break
+
+                for event in events:
                     if event.type != evdev.ecodes.EV_KEY or event.code != target_key:
                         continue
 
@@ -151,7 +186,10 @@ def main():
         stream.stop()
         stream.close()
         for kb in keyboards:
-            kb.close()
+            try:
+                kb.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
